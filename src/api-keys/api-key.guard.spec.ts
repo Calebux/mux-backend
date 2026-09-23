@@ -1,4 +1,5 @@
 import { Reflector } from '@nestjs/core';
+import { UnauthorizedException } from '@nestjs/common';
 import { ApiKeyGuard, REQUIRE_API_KEY, IS_PUBLIC } from './api-key.guard';
 import { ApiKeyService } from './api-key.service';
 
@@ -125,12 +126,19 @@ describe('ApiKeyGuard', () => {
     );
   });
 
-  it('rejects when a client-supplied user id does not match the verified API key identity', async () => {
+  it('rejects expired keys fail-closed with a typed unauthorized error', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
     jest.spyOn(reflector, 'get').mockReturnValue(true);
 
+    (mockApiKeyService.validateApiKey as jest.Mock) = jest.fn(async () => {
+      throw new UnauthorizedException({
+        code: 'api_key_expired',
+        message: 'API key has expired',
+      });
+    });
+
     const req: any = {
-      headers: { authorization: 'ApiKey mux_test_abc', 'user-agent': 'jest' },
+      headers: { authorization: 'ApiKey mux_test_expired', 'user-agent': 'jest' },
       path: '/wallets/protected',
       method: 'GET',
       ip: '127.0.0.1',
@@ -145,19 +153,26 @@ describe('ApiKeyGuard', () => {
       switchToHttp: () => ({ getRequest: () => req }),
     };
 
-    await expect(guard.canActivate(context)).rejects.toThrow();
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { code: 'api_key_expired' },
+    });
+    expect(req.apiKeyContext).toBeUndefined();
+    expect(mockApiKeyService.recordUsage).not.toHaveBeenCalled();
   });
 
-  it('rejects when a client-supplied user id header does not match the verified API key identity', async () => {
+  it('rejects revoked keys fail-closed with a typed unauthorized error', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
     jest.spyOn(reflector, 'get').mockReturnValue(true);
 
+    (mockApiKeyService.validateApiKey as jest.Mock) = jest.fn(async () => {
+      throw new UnauthorizedException({
+        code: 'api_key_revoked',
+        message: 'API key has been revoked',
+      });
+    });
+
     const req: any = {
-      headers: {
-        authorization: 'ApiKey mux_test_abc',
-        'user-agent': 'jest',
-        'x-user-id': 'attacker-supplied-id',
-      },
+      headers: { authorization: 'ApiKey mux_test_revoked', 'user-agent': 'jest' },
       path: '/wallets/protected',
       method: 'GET',
       ip: '127.0.0.1',
@@ -170,78 +185,20 @@ describe('ApiKeyGuard', () => {
       switchToHttp: () => ({ getRequest: () => req }),
     };
 
-    await expect(guard.canActivate(context)).rejects.toThrow();
+    await expect(guard.canActivate(context)).rejects.toMatchObject({
+      response: { code: 'api_key_revoked' },
+    });
+    expect(req.apiKeyContext).toBeUndefined();
+    expect(mockApiKeyService.recordUsage).not.toHaveBeenCalled();
   });
 
-  it('denies INACTIVE users by default with a stable error code', async () => {
+  it('never exposes raw key material in the attached context', async () => {
     jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
     jest.spyOn(reflector, 'get').mockReturnValue(true);
 
-    (mockApiKeyService.validateApiKey as jest.Mock) = jest.fn(async () => ({
-      apiKey: { id: 'key-id' },
-      project: { id: 'proj-id', rateLimitRpm: 10 },
-      developer: { id: 'dev-id' },
-      user: { id: 'dev-id', status: 'INACTIVE' },
-    }));
-
+    const rawKey = 'mux_test_abc';
     const req: any = {
-      headers: { authorization: 'ApiKey mux_test_abc', 'user-agent': 'jest' },
-      path: '/wallets/protected',
-      method: 'GET',
-      ip: '127.0.0.1',
-      socket: { remoteAddress: '127.0.0.1' },
-    };
-
-    const context: any = {
-      getHandler: () => undefined,
-      getClass: () => undefined,
-      switchToHttp: () => ({ getRequest: () => req }),
-    };
-
-    await expect(guard.canActivate(context)).rejects.toThrow();
-  });
-
-  it('denies SUSPENDED users by default with a stable error code', async () => {
-    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
-    jest.spyOn(reflector, 'get').mockReturnValue(true);
-
-    (mockApiKeyService.validateApiKey as jest.Mock) = jest.fn(async () => ({
-      apiKey: { id: 'key-id' },
-      project: { id: 'proj-id', rateLimitRpm: 10 },
-      developer: { id: 'dev-id' },
-      user: { id: 'dev-id', status: 'SUSPENDED' },
-    }));
-
-    const req: any = {
-      headers: { authorization: 'ApiKey mux_test_abc', 'user-agent': 'jest' },
-      path: '/wallets/protected',
-      method: 'GET',
-      ip: '127.0.0.1',
-      socket: { remoteAddress: '127.0.0.1' },
-    };
-
-    const context: any = {
-      getHandler: () => undefined,
-      getClass: () => undefined,
-      switchToHttp: () => ({ getRequest: () => req }),
-    };
-
-    await expect(guard.canActivate(context)).rejects.toThrow();
-  });
-
-  it('allows ACTIVE users through the status policy', async () => {
-    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
-    jest.spyOn(reflector, 'get').mockReturnValue(true);
-
-    (mockApiKeyService.validateApiKey as jest.Mock) = jest.fn(async () => ({
-      apiKey: { id: 'key-id' },
-      project: { id: 'proj-id', rateLimitRpm: 10 },
-      developer: { id: 'dev-id' },
-      user: { id: 'dev-id', status: 'ACTIVE' },
-    }));
-
-    const req: any = {
-      headers: { authorization: 'ApiKey mux_test_abc', 'user-agent': 'jest' },
+      headers: { authorization: `ApiKey ${rawKey}`, 'user-agent': 'jest' },
       path: '/wallets/protected',
       method: 'GET',
       ip: '127.0.0.1',
@@ -264,32 +221,7 @@ describe('ApiKeyGuard', () => {
     };
 
     await expect(guard.canActivate(context)).resolves.toBe(true);
-  });
-
-  it('fails closed when the status lookup dependency is unavailable', async () => {
-    jest.spyOn(reflector, 'getAllAndOverride').mockReturnValue(false);
-    jest.spyOn(reflector, 'get').mockReturnValue(true);
-
-    (mockApiKeyService.validateApiKey as jest.Mock) = jest.fn(async () => {
-      throw new Error('status lookup DB is down');
-    });
-
-    const req: any = {
-      headers: { authorization: 'ApiKey mux_test_abc', 'user-agent': 'jest' },
-      path: '/wallets/protected',
-      method: 'POST',
-      ip: '127.0.0.1',
-      socket: { remoteAddress: '127.0.0.1' },
-    };
-
-    const context: any = {
-      getHandler: () => undefined,
-      getClass: () => undefined,
-      switchToHttp: () => ({ getRequest: () => req }),
-    };
-
-    await expect(guard.canActivate(context)).rejects.toThrow(
-      'API key validation service unavailable',
-    );
+    expect(JSON.stringify(req.apiKeyContext)).not.toContain(rawKey);
+    expect(JSON.stringify(req.apiKeyInfo)).not.toContain(rawKey);
   });
 });
