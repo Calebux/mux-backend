@@ -3,6 +3,8 @@
 This runbook documents the feature flag and kill-switch that gate all
 mainnet-affecting payment behavior in `mux-backend`, including the
 **payment dry-run mode** described in [`PAYMENT-DRY-RUN.md`](./PAYMENT-DRY-RUN.md).
+It is the source of truth for operators and Stellar Wave contributors working
+on payment, wallet, and webhook delivery paths.
 
 > Scope: money-path and mainnet-affecting changes only. Testnet behavior is
 > unaffected unless explicitly noted.
@@ -26,6 +28,14 @@ spend, and so operators can disable the money path quickly during an incident.
 All flags are **deny-by-default**: unset or unparseable values are treated as
 `false`.
 
+- **Deny-by-default.** When unset or `false`, mainnet money-path writes and
+  outbound webhook delivery are disabled. Testnet behavior is unaffected.
+- **Fail-closed.** If the flag cannot be read (config/RPC/DB outage), treat it as
+  `false` and reject the write rather than proceeding.
+- **Kill-switch.** Setting the flag to `false` at runtime must stop new mainnet
+  writes and webhook deliveries without a redeploy; in-flight retries drain to
+  the dead-letter queue instead of being re-sent.
+
 Operational guidance:
 - Keep this flag off in production until mainnet payment submission has been reviewed and approved for general availability; flip it on per-environment via env/secret config.
 
@@ -43,6 +53,26 @@ The testnet faucet is a testnet-only surface. It must never dispense funds on ma
 - Rollback: the gate is deny-by-default and requires no flag to be safe; disabling the faucet entirely is the rollback path if a regression is suspected.
 
 Cross-links: see `test/testnet-faucet-mainnet-gate.e2e-spec.ts` for the end-to-end coverage of these invariants.
+
+## Webhook delivery (retries / idempotency)
+
+Outbound webhook delivery is a money-path-adjacent surface and is gated by the
+same flag on mainnet.
+
+- **Idempotency.** Every delivery carries a stable idempotency key derived from
+  the event id. Replayed or concurrent deliveries with the same key are deduped
+  so side effects happen at most once. Consumers should treat the key as the
+  dedupe token.
+- **Retries.** Failed deliveries are retried with exponential backoff, bounded
+  attempts, and jitter. Exhausted deliveries are moved to the dead-letter queue
+  as terminal failures; they are never retried unbounded.
+- **Fail-closed on outage.** If RPC/DB/Horizon is unavailable, writes fail
+  closed and deliveries are not acknowledged as delivered.
+- **Adversarial input.** Oversized batches and spoofed webhooks are rejected
+  before any side effect; signatures are verified and secrets are never logged.
+- **Observability.** Delivery attempts, retries, dedupe hits, and terminal
+  failures emit metrics and structured logs with correlation ids. Webhook
+  secrets, JWTs, and key material are redacted.
 
 ## Invariants
 
@@ -99,4 +129,6 @@ Each flag is independently reversible without a schema migration.
 
 - [`PAYMENT-DRY-RUN.md`](./PAYMENT-DRY-RUN.md)
 - [`SECURITY.md`](../SECURITY.md)
+- `test/webhooks.integration.e2e-spec.ts`
+- `README.md`
 
