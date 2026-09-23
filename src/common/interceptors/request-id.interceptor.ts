@@ -28,10 +28,40 @@ export const MAX_REQUEST_ID_LENGTH = 128;
 const REQUEST_ID_PATTERN = /^[A-Za-z0-9._:-]+$/;
 
 /**
- * Attaches a correlation id to every request so that privileged entrypoints
- * (transaction export jobs, wallet/payment APIs) can emit stable, traceable
- * error codes without leaking secrets. The id is echoed back on the response
- * and exposed on the request for downstream handlers and loggers.
+ * Only allow opaque, log-safe identifiers. Rejecting control characters and
+ * whitespace prevents header/log injection through a spoofed request id.
+ */
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]+$/;
+
+/**
+ * Resolves a trustworthy request id: reuse a well-formed inbound value when
+ * present, otherwise generate a new one. Never trust arbitrary client input.
+ */
+export function resolveRequestId(inbound?: unknown): string {
+  if (
+    typeof inbound === 'string' &&
+    inbound.length > 0 &&
+    inbound.length <= MAX_REQUEST_ID_LENGTH &&
+    SAFE_REQUEST_ID.test(inbound)
+  ) {
+    return inbound;
+  }
+  return randomUUID();
+}
+
+/**
+ * Assigns a correlation id to every request, echoes it back on the response
+ * and exposes it on the request so the error envelope and logs can include it.
+ *
+ * Internal cron-triggered endpoints are guarded by a required cron secret
+ * (see CronSecretGuard). Auth failures on those routes are surfaced with a
+ * stable error code and the correlation id below, without ever echoing the
+ * secret material back to the caller.
+ *
+ * The id is also used by privileged entrypoints (transaction export jobs,
+ * wallet/payment APIs) so they can emit stable, traceable error codes without
+ * leaking secrets. The id is echoed back on the response and exposed on the
+ * request for downstream handlers and loggers.
  */
 @Injectable()
 export class RequestIdInterceptor implements NestInterceptor {
