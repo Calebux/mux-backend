@@ -52,6 +52,48 @@ process.env.AUTH_RATE_LIMIT_WINDOW_MS =
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { AppModule } = require('../src/app.module');
 
+/**
+ * Deterministically serialize a value with stable key ordering so that the
+ * generated spec is byte-for-byte reproducible across machines and runs.
+ * Without this, key insertion order (which can vary) would produce spurious
+ * drift even when the API surface is unchanged.
+ */
+function stableStringify(value: unknown): string {
+  return JSON.stringify(sortKeys(value), null, 2);
+}
+
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map(sortKeys);
+  }
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>;
+    const sorted: Record<string, unknown> = {};
+    for (const key of Object.keys(obj).sort()) {
+      sorted[key] = sortKeys(obj[key]);
+    }
+    return sorted;
+  }
+  return value;
+}
+
+/**
+ * Collect the set of "METHOD /path" operation identifiers present in a spec
+ * document so drift can be reported at operation granularity, not just path.
+ */
+function collectOperations(doc: Record<string, unknown>): Set<string> {
+  const ops = new Set<string>();
+  const paths = (doc as any).paths ?? {};
+  for (const path of Object.keys(paths)) {
+    const methods = paths[path] ?? {};
+    for (const method of Object.keys(methods)) {
+      if (method.startsWith('x-')) continue;
+      ops.add(`${method.toUpperCase()} ${path}`);
+    }
+  }
+  return ops;
+}
+
 async function checkDrift() {
   const committedPath = resolve(__dirname, '../openapi.json');
 
@@ -85,7 +127,7 @@ async function checkDrift() {
   const document = SwaggerModule.createDocument(app, config);
   await app.close();
 
-  const fresh = JSON.stringify(document, null, 2);
+  const fresh = stableStringify(document);
   const committed = readFileSync(committedPath, 'utf-8');
 
   if (fresh === committed) {
@@ -93,7 +135,7 @@ async function checkDrift() {
     process.exit(0);
   }
 
-  // Produce a human-readable diff summary: show which top-level paths changed.
+  // Produce a human-readable diff summary at operation granularity.
   let committedDoc: Record<string, unknown>;
   try {
     committedDoc = JSON.parse(committed) as Record<string, unknown>;
@@ -102,25 +144,25 @@ async function checkDrift() {
     process.exit(1);
   }
 
-  const freshPaths = new Set(Object.keys((document as any).paths ?? {}));
-  const committedPaths = new Set(
-    Object.keys((committedDoc as any).paths ?? {}),
-  );
+  const freshOps = collectOperations(document as unknown as Record<string, unknown>);
+  const committedOps = collectOperations(committedDoc);
 
-  const added = [...freshPaths].filter((p) => !committedPaths.has(p));
-  const removed = [...committedPaths].filter((p) => !freshPaths.has(p));
+  const added = [...freshOps].filter((op) => !committedOps.has(op)).sort();
+  const removed = [...committedOps].filter((op) => !freshOps.has(op)).sort();
 
   console.error('\n[openapi:check-drift] ❌  OpenAPI spec has drifted from committed file!');
   if (added.length > 0) {
-    console.error('\nPaths present in routes but MISSING from committed spec:');
-    added.forEach((p) => console.error(`  + ${p}`));
+    console.error('\nOperations present in routes but MISSING from committed spec:');
+    added.forEach((op) => console.error(`  + ${op}`));
   }
   if (removed.length > 0) {
-    console.error('\nPaths in committed spec but NO LONGER in routes:');
-    removed.forEach((p) => console.error(`  - ${p}`));
+    console.error('\nOperations in committed spec but NO LONGER in routes:');
+    removed.forEach((op) => console.error(`  - ${op}`));
   }
   if (added.length === 0 && removed.length === 0) {
-    console.error('\n(No path additions/removals — likely a schema or decorator change.)');
+    console.error(
+      '\n(No operation additions/removals — likely a schema, parameter, or decorator change.)',
+    );
   }
   console.error(
     '\nFix: run "pnpm run openapi:generate" locally, review the diff, and commit the updated openapi.json.\n',

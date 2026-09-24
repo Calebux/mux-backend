@@ -1,7 +1,5 @@
 # Auth & Feature Flags
 
-# Auth & Feature Flags
-
 This document describes the authorization model and feature-flag / kill-switch
 surface used by the invisible-wallet orchestration path, and summarizes the
 feature flags added for the auth and session endpoints, including the
@@ -149,20 +147,64 @@ but not sufficient. New privileged surfaces are deny-by-default.
 
 ### Testnet vs mainnet
 
-- Testnet may enable both providers for migration testing; mainnet should enable exactly one.
-- Enabling a provider on mainnet is a money-path-adjacent change and must be gated behind the
-  corresponding `FEATURE_AUTH_PROVIDER_*` flag with a documented rollback (flip the flag back to
-  `false`; no data migration required).
+- Testnet may enable both providers for migration testing.
+- Mainnet must enable exactly one provider; enabling both is treated as a misconfiguration and
+  auth entrypoints fail closed (HTTP 503, code `AUTH_PROVIDER_MISCONFIGURED`).
 
-## Operational guidance
+## Feature flags service
 
-- To enable auth in runtime, set `FEATURE_AUTH_API=true` in the configuration used by the service (env, k8s secret, etc.).
-- To switch providers, set `AUTH_PROVIDER` and the matching `FEATURE_AUTH_PROVIDER_*` flag together; never enable a provider flag without confirming the provider's verification dependency is reachable.
-- Ensure any API gateway or routing changes are coordinated when toggling these flags in production to avoid unexpected client errors.
-- For `GET /auth/sessions`, ensure the backend can extract the authenticated user's ID from the verified JWT and scope queries accordingly.
-- Rollback: set the affected `FEATURE_AUTH_PROVIDER_*` flag to `false` (or revert `AUTH_PROVIDER`) and redeploy; auth fails closed until a valid provider is re-enabled.
+The feature flags service is the single, typed surface for reading and mutating flags. It is the
+source of truth for flag evaluation; callers must not read environment variables directly.
 
-## References
+### Typed API
 
-- [`docs/WALLET-API.md`](./WALLET-API.md)
-- `test/wallet-orchestration.e2e-spec.ts`
+- `getFlag(name: FlagName, ctx: FlagContext): Promise<FlagResult>` — evaluate a flag for a caller.
+- `setFlag(name: FlagName, value: boolean, ctx: FlagContext, idempotencyKey: string): Promise<FlagResult>` — mutate a flag (privileged).
+- `listFlags(ctx: FlagContext): Promise<FlagResult[]>` — list flags visible to the caller.
+
+`FlagName` is a closed union of known flags; unknown names are rejected with
+`FEATURE_FLAG_UNKNOWN` rather than defaulting to enabled.
+
+### Stable error codes
+
+| Code                          | Meaning                                                        |
+|-------------------------------|----------------------------------------------------------------|
+| `FEATURE_FLAG_UNKNOWN`        | Flag name is not in the known set; fail closed.                |
+| `FEATURE_FLAG_AUTHZ_DENIED`   | Caller lacks owner/delegate/guardian/API-key/JWT rights.       |
+| `FEATURE_FLAG_IDEMPOTENCY_CONFLICT` | Replayed mutation with a different payload.              |
+| `FEATURE_FLAG_DEPENDENCY_UNAVAILABLE` | DB/RPC/Horizon outage; writes fail closed.             |
+| `FEATURE_FLAG_MISCONFIGURED`  | Testnet/mainnet misconfiguration; fail closed.                 |
+
+Every result and error carries a `correlationId` echoed from the request (or generated) and never
+includes secrets, tokens, or raw key material.
+
+### Authorization
+
+All privileged flag surfaces are deny-by-default. Reads require a valid owner/delegate/guardian/
+API-key/JWT identity; mutations require owner (or an explicitly scoped delegate). A revoked
+delegate, expired JWT, or wrong role is rejected with `FEATURE_FLAG_AUTHZ_DENIED` before any state
+change.
+
+### Fail-closed behavior
+
+- Unknown or missing flags on a money-path evaluate to **off**.
+- If the backing store (DB/RPC/Horizon) is unavailable, reads return the last known safe default
+  and writes fail closed with `FEATURE_FLAG_DEPENDENCY_UNAVAILABLE`.
+- Mainnet-affecting flags require the mainnet safety flag; otherwise the mutation fails closed with
+  `FEATURE_FLAG_MISCONFIGURED`.
+
+### Idempotency
+
+Flag mutations must carry an idempotency key. A replay with the same payload returns the stored
+result; a replay with a different payload is rejected with `FEATURE_FLAG_IDEMPOTENCY_CONFLICT`.
+
+### Observability
+
+Flag evaluations and mutations emit metrics (counts by flag and outcome) and structured logs with
+the `correlationId`. Logs redact secrets, JWTs, webhook secrets, and raw key material.
+
+### Rollback
+
+Flag mutations are reversible via the same `setFlag` API. The kill-switch for the flags service
+itself is `FEATURE_FLAGS_SERVICE_ENABLED`; when `false`, mutations fail closed and reads return
+safe defaults.

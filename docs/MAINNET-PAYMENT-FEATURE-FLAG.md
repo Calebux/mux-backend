@@ -39,6 +39,78 @@ All flags are **deny-by-default**: unset or unparseable values are treated as
 Operational guidance:
 - Keep this flag off in production until mainnet payment submission has been reviewed and approved for general availability; flip it on per-environment via env/secret config.
 
+## Feature flags service (#909)
+
+The flags above are served by a single typed feature-flags service. This section
+is the contract for that service; it is the source of truth for flag evaluation
+and mutation and must stay consistent with the flag table above.
+
+### Evaluation API
+
+- `evaluate(flagKey, context)` returns a typed result: `{ key, enabled, value, source, correlationId }`.
+- `evaluateAll(context)` returns a map of `flagKey -> result` for a caller's context.
+- Evaluation is **read-only** and never mutates state.
+- Unknown or missing flag keys resolve to `enabled: false` (deny-by-default).
+  Money-path callers must treat an unknown/missing flag as **off** and fail
+  closed; they must never default to `true`.
+
+### Mutation API
+
+- `setFlag(flagKey, value, actor, idempotencyKey)` is the only privileged
+  mutation surface. It returns the resulting flag state plus a correlation id.
+- Mutations are **deny-by-default**: a caller must present a valid
+  owner/delegate/guardian/API-key/JWT credential with the flag-admin role.
+  Revoked delegates and expired credentials are rejected before any write.
+- The service is the **server-side source of truth**. Client-supplied headers,
+  query params, or body fields can never enable a flag; the mainnet flag is
+  evaluated server-side only.
+
+### Stable error codes
+
+| Code | Meaning |
+| --- | --- |
+| `FEATURE_FLAG_NOT_FOUND` | Unknown flag key on a mutation. |
+| `FEATURE_FLAG_FORBIDDEN` | Missing/invalid/revoked credential or wrong role. |
+| `FEATURE_FLAG_INVALID_VALUE` | Value fails the flag's type/schema. |
+| `FEATURE_FLAG_UNAVAILABLE` | Flag store (DB/RPC) unreachable; fail closed. |
+| `FEATURE_FLAG_CONFLICT` | Idempotency key reused with a different payload. |
+
+Every error carries a correlation id (request id) so ops can trace a failed
+evaluation or mutation without exposing secrets or raw key material.
+
+### Idempotency
+
+- Mutations are idempotent on `(flagKey, idempotencyKey)`. A replayed or
+  concurrent request with the same key returns the original result and does not
+  re-apply the write.
+- Reusing an idempotency key with a **different** payload is rejected with
+  `FEATURE_FLAG_CONFLICT`.
+
+### Fail-closed behavior
+
+- If the flag store (DB/RPC) is unavailable, **writes fail closed** with
+  `FEATURE_FLAG_UNAVAILABLE`; no partial mutation is applied.
+- On read outage, evaluation returns the last-known-safe value, which for
+  money-path flags is `false`. There is no default-allow path.
+- Testnet vs mainnet misconfig: an unresolved network is treated as denied, not
+  as testnet.
+
+### Observability
+
+- `feature_flag_evaluations_total{key,result}` — evaluation outcomes.
+- `feature_flag_mutations_total{key,result}` — mutation outcomes.
+- `feature_flag_errors_total{code}` — stable error codes emitted.
+- Logs include the flag key, actor id, correlation id, and result; they never
+  include raw key material, JWTs, or webhook secrets.
+
+### Rollback
+
+- The service is deny-by-default and requires no flag to be safe.
+- To stop a bad flag change, set the affected flag back to its safe value
+  (`false` for money-path flags) via `setFlag`; no schema migration or redeploy
+  is required.
+- Full stop remains `PAYMENT_KILL_SWITCH=true` as described below.
+
 ## Testnet Faucet Mainnet Gate (#882)
 
 The testnet faucet is a testnet-only surface. It must never dispense funds on mainnet, and it must fail closed when the configured network is unknown or misconfigured.
@@ -120,15 +192,10 @@ Each flag is independently reversible without a schema migration.
 
 - `payments_dry_run_total{result}` — dry-run outcomes.
 - `payments_rejected_total{reason}` — authz/flag/idempotency rejections.
-- `payments_submitted_total` — live submissions (must be 0 when gated).
-- `payments_mainnet_flag_state{enabled}` — current mainnet flag state, emitted
-  on startup and on every flag re-read so operators can alert on drift.
-- Structured logs include `correlationId` and redacted account refs only.
+- `payments_submitted_total` — live mainnet submissions.
+- `feature_flag_evaluations_total{key,result}` — flag evaluation outcomes.
+- `feature_flag_mutations_total{key,result}` — flag mutation outcomes.
+- `feature_flag_errors_total{code}` — stable feature-flag error codes.
 
-## References
-
-- [`PAYMENT-DRY-RUN.md`](./PAYMENT-DRY-RUN.md)
-- [`SECURITY.md`](../SECURITY.md)
-- `test/webhooks.integration.e2e-spec.ts`
-- `README.md`
-
+All metrics and logs carry a correlation id and redact secrets, JWTs, and raw
+key material.
