@@ -344,6 +344,25 @@ The check runs inside `FeeBumpService.submitFeeBump` before any wallet key mater
 decrypted or any call to Horizon is made. See [docs/MAINNET-PAYMENT-FEATURE-FLAG.md](docs/MAINNET-PAYMENT-FEATURE-FLAG.md)
 for operational guidance.
 
+### Transaction Environment Validator (fail-closed boot gate)
+
+`TransactionEnvValidatorService` validates the transaction money-path
+configuration at startup and **fails closed**:
+
+- In `NODE_ENV=production`, enabling `FEATURE_MAINNET_PAYMENTS` or
+  `FEATURE_MAINNET_PAYMENT_SUBMIT` without
+  `STELLAR_HORIZON_MAINNET_URL` **prevents the application from booting** with
+  a stable, typed error code
+  (`TRANSACTION_ENV_VALIDATOR_MAINNET_HORIZON_MISCONFIGURED`).
+- Unset or unrecognized flag values are treated as disabled (deny-by-default);
+  testnet and non-production environments are never blocked.
+- Startup snapshots log only booleans and stable codes — never secrets, keys,
+  JWTs, or webhook secrets.
+
+Covered end-to-end in `test/transaction-env-validator.e2e-spec.ts` and
+unit-tested in `src/transactions/transaction-env-validator.service.spec.ts`.
+Runbook: [docs/MAINNET-PAYMENT-FEATURE-FLAG.md](docs/MAINNET-PAYMENT-FEATURE-FLAG.md).
+
 ### Webhook-Delivered Payment Events
 
 Payment domain events are bridged to the outbound webhook system via

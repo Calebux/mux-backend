@@ -230,6 +230,46 @@ jobs:
       - name: Run login smoke e2e
         run: pnpm test:e2e -- test/login-smoke.e2e-spec.ts
 
+  transaction-env-validator-e2e:
+    name: Transaction Env Validator E2E (required)
+    runs-on: ubuntu-latest
+
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/mux_test
+      WALLET_ENCRYPTION_KEY: ci-test-encryption-key-min-32-chars-long!!
+      WEBHOOK_SIGNING_KEY: ci-test-webhook-signing-key-min-32-chars-long!!
+      STELLAR_HORIZON_URL: https://horizon-testnet.stellar.org
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm prisma:generate
+
+      - name: Verify transaction env validator e2e spec is present
+        # #914: Fail closed if the required spec is missing so the check can
+        # never be silently skipped.
+        run: test -f test/transaction-env-validator.e2e-spec.ts
+
+      - name: Run transaction env validator e2e
+        run: pnpm test:e2e -- test/transaction-env-validator.e2e-spec.ts
+
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest

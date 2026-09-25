@@ -81,6 +81,13 @@ Changes to internal cron guards, authz, or secret handling must include tests
 covering the auth negatives and be landed behind a feature flag or kill-switch
 when they affect production behavior.
 
+Transaction money-path configuration is validated at boot by
+`TransactionEnvValidatorService` (fail-closed in production). Any new
+mainnet-affecting entrypoint or flag must stay consistent with that validator
+and its tests (`test/transaction-env-validator.e2e-spec.ts`,
+`src/transactions/transaction-env-validator.service.spec.ts`) and with the
+runbook in `docs/MAINNET-PAYMENT-FEATURE-FLAG.md`.
+
 ## Supported Versions
 
 We provide security updates for the latest release of each component. Please

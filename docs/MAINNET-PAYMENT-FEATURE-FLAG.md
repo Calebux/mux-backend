@@ -126,6 +126,31 @@ The testnet faucet is a testnet-only surface. It must never dispense funds on ma
 
 Cross-links: see `test/testnet-faucet-mainnet-gate.e2e-spec.ts` for the end-to-end coverage of these invariants.
 
+## Transaction Environment Validator (#914)
+
+The `TransactionEnvValidatorService` is a **fail-closed boot-time gate** for
+money-path configuration. It runs during NestJS startup (`OnModuleInit`), so a
+misconfigured deployment refuses to start instead of silently submitting
+mainnet payments to an unknown or testnet Horizon endpoint.
+
+- Gate rule: in `NODE_ENV=production`, if `FEATURE_MAINNET_PAYMENTS` or
+  `FEATURE_MAINNET_PAYMENT_SUBMIT` is enabled **and**
+  `STELLAR_HORIZON_MAINNET_URL` is missing/empty, startup fails with a stable,
+  typed error code (`TRANSACTION_ENV_VALIDATOR_MAINNET_HORIZON_MISCONFIGURED`).
+- Deny-by-default: an unset or unrecognized flag value is treated as
+  `false`; it can never enable a mainnet surface accidentally.
+- Testnet and non-production environments are never blocked by this validator;
+  local/test flows with no mainnet config continue to work.
+- The validator never logs secrets, keys, JWTs, or webhook secrets; the startup
+  snapshot is booleans + stable enum strings only.
+- Observed behavior is covered end-to-end in
+  `test/transaction-env-validator.e2e-spec.ts` and unit-tested in
+  `src/transactions/transaction-env-validator.service.spec.ts`.
+
+Operational guidance: keep `STELLAR_HORIZON_MAINNET_URL` set in production
+secret/env config before enabling any mainnet payment flag. The validator is a
+safety net for the flags below; the flags remain the operational kill-switch.
+
 ## Webhook delivery (retries / idempotency)
 
 Outbound webhook delivery is a money-path-adjacent surface and is gated by the
