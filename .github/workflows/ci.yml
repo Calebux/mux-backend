@@ -195,8 +195,8 @@ jobs:
           WALLET_ENCRYPTION_KEY: ci-test-encryption-key-min-32-chars-long!!
           WEBHOOK_SIGNING_KEY: ci-test-webhook-signing-key-min-32-chars-long!!
 
-  key-consolidation-verify:
-    name: Key Management Consolidation Verify (required)
+  security-md:
+    name: SECURITY.md contract
     runs-on: ubuntu-latest
 
     steps:
@@ -216,6 +216,13 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Verify SECURITY.md against test contract
+        # #916: Required check. Runs test/security-md.spec.ts (previously
+        # ungated) so the security policy — contacts, Response SLA, safe
+        # harbor, production requirements, disclosure timeline — cannot
+        # silently drift from the documented contract.
+        run: pnpm exec jest --config ./test/jest-e2e.json --runTestsByPath test/security-md.spec.ts
 
       - name: Run key management consolidation verification
         # #918: Fail-closed required check for the custody-key invariants
