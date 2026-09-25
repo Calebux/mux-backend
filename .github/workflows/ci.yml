@@ -172,6 +172,35 @@ jobs:
           WALLET_ENCRYPTION_KEY: ci-test-encryption-key-min-32-chars-long!!
           WEBHOOK_SIGNING_KEY: ci-test-webhook-signing-key-min-32-chars-long!!
 
+  security-md:
+    name: SECURITY.md contract
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: latest
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify SECURITY.md against test contract
+        # #916: Required check. Runs test/security-md.spec.ts (previously
+        # ungated) so the security policy — contacts, Response SLA, safe
+        # harbor, production requirements, disclosure timeline — cannot
+        # silently drift from the documented contract.
+        run: pnpm exec jest --config ./test/jest-e2e.json --runTestsByPath test/security-md.spec.ts
+
   login-smoke-e2e:
     name: Login Smoke E2E (required)
     runs-on: ubuntu-latest
