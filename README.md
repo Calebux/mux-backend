@@ -479,6 +479,20 @@ Mux Backend uses a consolidated `KeyManagementService` for all cryptographic key
 - [Key Management Consolidation Guide](docs/key-management-consolidation.md)
 - [Migration Guide](docs/MIGRATION-KEY-MANAGEMENT.md)
 
+**Verification (CI):**
+- `pnpm verify:key-consolidation` runs the typed static gate in
+  `scripts/verify-key-management-consolidation.ts` (workflow already covers
+  `docs/key-management-consolidation.md`, `docs/custody-security-model.md`, and
+  `docs/MAINNET-PAYMENT-FEATURE-FLAG.md`). It check that custody-key invariants hold:
+  no direct key generation in money-path services, no committed key material,
+  envelope-at-rest schema fields, deny-by-default authz, correlation ids, stable
+  error codes, fail-closed dependency handling, response redaction, the mainnet
+  money-path kill-switch default, and required runbooks.
+- Fail-closed: exit code `0` = pass, `1` = at least one error finding,
+  `2`/`3` = verifier failure or misuse. Add `--json` for the machine-readable
+  report. This gate runs as a **required** GitHub Actions check and cannot be
+  disabled with an environment variable (deny-by-default).
+
 > ⚠️ This MVP uses a custodial model. Progressive decentralization is planned.
 
 ---

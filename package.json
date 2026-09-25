@@ -29,6 +29,7 @@
     "openapi:lint": "npx @redocly/cli@latest lint openapi.json --config redocly.yaml",
     "openapi:check-drift": "ts-node -r tsconfig-paths/register scripts/check-openapi-drift.ts",
     "prisma:check-migrations": "ts-node -r tsconfig-paths/register scripts/check-migration-naming.ts",
+    "verify:key-consolidation": "ts-node -r tsconfig-paths/register scripts/verify-key-management-consolidation.ts",
     "test:scripts": "jest --config scripts/jest.config.js"
   },
   "dependencies": {
