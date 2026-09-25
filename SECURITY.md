@@ -193,6 +193,27 @@ platforms or law enforcement — for research that complies with this policy.
 - **Never log** secrets, raw key material, JWTs, or webhook secrets; include
   correlation ids and stable error codes instead.
 
+## Verification Scripts (CI Gates)
+
+The repository ships fail-closed verification scripts that assert the documented
+security invariants for custody, wallet orchestration, and idempotent user
+creation. They run as the `verify-scripts` CI job and exit non-zero on any
+violation; a failing script blocks merge:
+
+- `verify-encryption.sh` — key encryption at rest, controlled decryption, safe
+  decryption-failure handling, strong cipher, boot-time key validation.
+- `verify-orchestrator.sh` — atomic/idempotent wallet creation, one wallet per
+  user, fail-closed dependency outages, authz, feature-flag gating.
+- `verify-idempotent-user.sh` — `findOrCreateUser`, `authId` uniqueness,
+  existing-user return, authz gating, schema invariants.
+- `scripts/verify-key-management-consolidation.sh` — key-management
+  consolidation invariants.
+
+The scripts never print raw key material, JWTs, or webhook secrets. If an
+invariant changes, update the script **and** its cited reference document in the
+same PR (see README § Verification Scripts and `docs/custody-security-model.md`).
+Do not bypass these gates with `continue-on-error`.
+
 ## Stellar Wave Contributors
 
 If you are contributing through Stellar Wave, please review this document and
@@ -200,6 +221,30 @@ the relevant runbooks before touching money-path or mainnet-affecting code.
 Changes to internal cron guards, authz, or secret handling must include tests
 covering the auth negatives and be landed behind a feature flag or kill-switch
 when they affect production behavior.
+
+### Custody Key Management Verification
+
+The codebase includes a fail-closed static verification gate for the custody-key
+management consolidation invariants:
+
+- **Script**: `scripts/verify-key-management-consolidation.ts` &
+  `scripts/verify-key-management-consolidation.sh`
+- **Run**: `pnpm verify:key-consolidation` (required CI check)
+- **Docs verified against**:
+  - [Custody Security Model](docs/custody-security-model.md)
+  - [Key Management Consolidation](docs/key-management-consolidation.md)
+  - [Mainnet Payment Feature Flag](docs/MAINNET-PAYMENT-FEATURE-FLAG.md)
+  - [Key Management Migration Guide](docs/MIGRATION-KEY-MANAGEMENT.md)
+
+Invariants checked: no direct key generation in money-path services, no committed
+private key material, envelope-at-rest schema fields, deny-by-default authz,
+correlation ids, stable error codes, fail-closed dependency handling, response
+redaction, and mainnet pay-path kill-switch defaults.
+
+The gate always runs offline (no database or RPC required), uses stable exit codes
+(0=pass, 1=findings, 2/3=infra/misuse), and rejects any environment override that
+would disable it (deny-by-default). Findings report `file:line` locations without
+raw key material — secrets are never echoed in output.
 
 ## Supported Versions
 
