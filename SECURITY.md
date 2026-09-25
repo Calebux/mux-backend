@@ -73,6 +73,27 @@ mismatched secret disables the internal jobs rather than exposing them.
 - All privileged surfaces are deny-by-default; new internal entrypoints must be
 authorized and rate-limited before they are exposed.
 
+## Verification Scripts (CI Gates)
+
+The repository ships fail-closed verification scripts that assert the documented
+security invariants for custody, wallet orchestration, and idempotent user
+creation. They run as the `verify-scripts` CI job and exit non-zero on any
+violation; a failing script blocks merge:
+
+- `verify-encryption.sh` — key encryption at rest, controlled decryption, safe
+  decryption-failure handling, strong cipher, boot-time key validation.
+- `verify-orchestrator.sh` — atomic/idempotent wallet creation, one wallet per
+  user, fail-closed dependency outages, authz, feature-flag gating.
+- `verify-idempotent-user.sh` — `findOrCreateUser`, `authId` uniqueness,
+  existing-user return, authz gating, schema invariants.
+- `scripts/verify-key-management-consolidation.sh` — key-management
+  consolidation invariants.
+
+The scripts never print raw key material, JWTs, or webhook secrets. If an
+invariant changes, update the script **and** its cited reference document in the
+same PR (see README § Verification Scripts and `docs/custody-security-model.md`).
+Do not bypass these gates with `continue-on-error`.
+
 ## Stellar Wave Contributors
 
 If you are contributing through Stellar Wave, please review this document and
