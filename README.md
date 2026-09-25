@@ -481,6 +481,30 @@ Mux Backend uses a consolidated `KeyManagementService` for all cryptographic key
 
 > ⚠️ This MVP uses a custodial model. Progressive decentralization is planned.
 
+### Verification Scripts (CI Gates)
+
+Four fail-closed verification scripts assert the documented security invariants
+against the source tree and Prisma schema. They run in CI (the `verify-scripts`
+job) and exit **non-zero when any invariant is violated**, so a regression is
+surfaced as a failed PR rather than a silent drift. Run them locally from the
+repo root with `bash <script>.sh` — they are plain bash + static analysis, need
+no database/RPC/Horizon connection, and never print raw key material.
+
+| Script | Invariants verified | References |
+|--------|--------------------|------------|
+| `verify-encryption.sh` | Keys encrypted before storage; env-based key; controlled decryption; safe failure handling; no plaintext persistence; strong cipher; boot validation | [`docs/custody-security-model.md`](docs/custody-security-model.md), README § Security |
+| `verify-orchestrator.sh` | Orchestrator presence; atomic creation; one-wallet-per-user; idempotency; fail-closed outages; authz; feature-flag gate | [`docs/WALLET-API.md`](docs/WALLET-API.md), [`docs/FEATURE-FLAGS.md`](docs/FEATURE-FLAGS.md), [`test/wallet-orchestration.e2e-spec.ts`](test/wallet-orchestration.e2e-spec.ts) |
+| `verify-idempotent-user.sh` | `findOrCreateUser`; `authId` uniqueness; existing-user return; authz; schema invariants; fail-closed outages | [`test/users-find-or-create.e2e-spec.ts`](test/users-find-or-create.e2e-spec.ts), [`prisma/schema.prisma`](prisma/schema.prisma) |
+| `scripts/verify-key-management-consolidation.sh` | Key-management consolidation invariants | [`docs/key-management-consolidation.md`](docs/key-management-consolidation.md), [`docs/MIGRATION-KEY-MANAGEMENT.md`](docs/MIGRATION-KEY-MANAGEMENT.md) |
+
+Treat a failing verification script as a failed PR — do not bypass it with
+`continue-on-error`. If a check is outdated because a documented invariant
+changed, update **both** the script and its cited reference document in the same
+PR.
+
+See the [Verification Scripts Runbook](docs/verify-scripts-runbook.md) for the
+full invariant list, failure interpretation, and rollback strategy.
+
 ---
 
 ## Authentication Flow

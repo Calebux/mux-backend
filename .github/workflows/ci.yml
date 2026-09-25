@@ -64,6 +64,29 @@ jobs:
         # migration_lock.toml presence, no duplicate timestamps).
         run: pnpm run prisma:check-migrations
 
+  verify-scripts:
+    # #917: Fail-closed CI gate for the security verification scripts.
+    # Each script asserts a set of documented invariants (encryption before
+    # storage, atomic/idempotent wallet orchestration, idempotent user
+    # creation) and exits non-zero when any are violated. Kept dependency-free
+    # (plain bash + static analysis) so it runs fast and cannot be silently
+    # skipped by a broken service/dependency step.
+    name: Verify Security Invariants
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run verify-encryption.sh
+        run: bash verify-encryption.sh
+
+      - name: Run verify-orchestrator.sh
+        run: bash verify-orchestrator.sh
+
+      - name: Run verify-idempotent-user.sh
+        run: bash verify-idempotent-user.sh
+
   openapi-drift:
     name: OpenAPI Generate + Drift
     runs-on: ubuntu-latest
